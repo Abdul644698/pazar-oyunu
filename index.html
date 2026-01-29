@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="az">
+<head>
+<meta charset="UTF-8">
+<title>Bazar Oyunu – Online</title>
+<style>
+body{margin:0;font-family:Arial;background:#0b132b;color:white}
+#top{background:#000a;padding:10px;display:flex;justify-content:space-between}
+.box{background:#1c2541;margin:15px;padding:15px;border-radius:10px}
+button,input,select{padding:7px;margin:4px;border-radius:5px;border:none}
+button{background:#5bc0be;color:black;cursor:pointer}
+.item{background:#3a506b;padding:8px;margin:6px 0;border-radius:5px;display:flex;justify-content:space-between;align-items:center}
+.admin{background:#fca311;color:black}
+input.priceInput{width:60px;margin-left:10px}
+</style>
+</head>
+<body>
+
+<div id="top">
+<span id="userInfo">Giriş yoxdur</span>
+<span>Pul: <b><span id="userMoney">0</span> AZN</b></span>
+</div>
+
+<!-- LOGIN -->
+<div class="box" id="loginBox">
+<h2>Giriş / Qeydiyyat</h2>
+<input id="username" placeholder="İstifadəçi adı"><br>
+<input id="password" type="password" placeholder="Şifrə"><br>
+<button onclick="login()">Daxil ol</button>
+</div>
+
+<!-- MENU -->
+<div class="box" id="menu" style="display:none">
+<button onclick="show('wholesale')">🏭 Toptancı</button>
+<button onclick="show('myMarket')">🏪 Öz Bazarım</button>
+<button onclick="show('globalMarket')">🌍 Bazardakı mallar</button>
+<button onclick="show('sendMoneyBox')">💸 Pul Göndər</button>
+<button onclick="show('adminPanel')">👑 Admin Panel</button>
+<button onclick="logout()">Çıxış</button>
+</div>
+
+<!-- TOPTANCI -->
+<div class="box" id="wholesale" style="display:none">
+<h3>🏭 Toptancı</h3>
+<div id="wholesaleItems"></div>
+</div>
+
+<!-- Öz bazar -->
+<div class="box" id="myMarket" style="display:none">
+<h3>Öz Bazarın</h3>
+<div id="myItems"></div>
+</div>
+
+<!-- Bazardakı mallar -->
+<div class="box" id="globalMarket" style="display:none">
+<h3>🌍 Bazardakı Mallar</h3>
+<div id="globalItems"></div>
+</div>
+
+<!-- Pul göndər -->
+<div class="box" id="sendMoneyBox" style="display:none">
+<h3>💸 Pul Göndər</h3>
+<select id="sendUser"></select>
+<input type="number" id="sendAmount" placeholder="Məbləğ">
+<button onclick="sendMoney()">Göndər</button>
+</div>
+
+<!-- ADMIN PANEL -->
+<div class="box admin" id="adminPanel" style="display:none">
+<h3>👑 Admin Panel</h3>
+<p>Admin pulu: <b id="adminMoneyDisplay"></b> AZN</p>
+
+<h4>İstifadəçilər</h4>
+<div id="adminUsers"></div>
+
+<h4>Topdan mallar</h4>
+<input id="wName" placeholder="Topdan mal adı">
+<input id="wPrice" type="number" placeholder="Topdan qiymət AZN">
+<button onclick="addWholesale()">Əlavə et</button>
+<div id="adminWholesale"></div>
+</div>
+
+<!-- Firebase CDN -->
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+
+<script>
+// --- Firebase Config ---
+const firebaseConfig = {
+  apiKey: "API_KEYIN",
+  authDomain: "pazar-oyun.firebaseapp.com",
+  databaseURL: "https://pazar-oyun-default-rtdb.firebaseio.com",
+  projectId: "pazar-oyun",
+  storageBucket: "pazar-oyun.appspot.com",
+  messagingSenderId: "2500103464",
+  appId: "1:2500103464:web:641cb188ee8de73293541"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+// --- GLOBAL VARIABLES ---
+let currentUser = null;
+let admin = null;
+
+// --- HELPERS ---
+function updateTopbar(money){
+  userInfo.innerText = currentUser + (currentUser===admin?" (ADMIN)":"");
+  document.getElementById("userMoney").innerText = money.toFixed(2);
+}
+
+// --- LOGIN ---
+function login(){
+  let u = username.value.trim();
+  let p = password.value.trim();
+  if(!u || !p){ alert("Boş olmaz"); return; }
+
+  // Check if admin exists
+  db.ref("admin").once("value").then(snapshot=>{
+    admin = snapshot.val();
+    db.ref("users/"+u).once("value").then(snap=>{
+      let data = snap.val();
+      if(!admin){
+        // No admin yet → first user is admin
+        db.ref("admin").set(u);
+        admin = u;
+        db.ref("users/"+u).set({password:p, money:999999999, stock:{}});
+        alert("Siz ADMIN oldunuz! Pul: 999999999 AZN");
+      } else if(u === admin){
+        if(!data || data.password!==p){ alert("Şifrə səhvdir"); return; }
+      } else {
+        if(!data){
+          db.ref("users/"+u).set({password:p, money:10, stock:{}});
+          alert("Yeni istifadəçi yaradıldı, pul: 10 AZN");
+        } else if(data.password!==p){ alert("Şifrə səhvdir"); return; }
+      }
+      currentUser = u;
+      start();
+    });
+  });
+}
+
+// --- START ---
+function start(){
+  loginBox.style.display="none";
+  menu.style.display="block";
+  loadAll();
+}
+
+// --- SHOW ---
+function show(id){
+  document.querySelectorAll(".box").forEach(b=>b.style.display="none");
+  menu.style.display="block";
+  document.getElementById(id).style.display="block";
+}
+
+// --- LOAD ALL ---
+function loadAll(){
+  loadUserMoney();
+  loadWholesale();
+  loadMyStock();
+  loadGlobalMarket();
+  loadSendUsers();
+  loadAdminPanel();
+}
+
+// --- LOAD USER MONEY ---
+function loadUserMoney(){
+  if(currentUser===admin){
+    db.ref("users/"+currentUser+"/money").set(999999999);
+    updateTopbar(999999999);
+  } else {
+    db.ref("users/"+currentUser+"/money").once("value").then(snap=>{
+      updateTopbar(snap.val());
+    });
+  }
+}
+
+// --- LOGOUT ---
+function logout(){
+  currentUser=null;
+  location.reload();
+}
+
+// --- LOAD WHOLESALE ---
+function loadWholesale(){
+  db.ref("wholesale").once("value").then(snap=>{
+    let items = snap.val() || {};
+    wholesaleItems.innerHTML="";
+    Object.keys(items).forEach((k)=>{
+      let btn = currentUser===admin ? `<button onclick="deleteWholesale('${k}')">Sil</button>` : `<button onclick="buyWholesale('${k}')">Al</button>`;
+      wholesaleItems.innerHTML += `<div class="item">${items[k].name} | Qiymət: ${items[k].price} AZN ${btn}</div>`;
+    });
+  });
+}
+
+// --- ADD WHOLESALE ---
+function addWholesale(){
+  if(currentUser!==admin) return;
+  let name = wName.value.trim();
+  let price = Number(wPrice.value);
+  if(!name||price<=0){alert("Düzgün daxil et"); return;}
+  let key = db.ref("wholesale").push().key;
+  db.ref("wholesale/"+key).set({name, price});
+  wName.value=""; wPrice.value="";
+  loadWholesale();
+}
+
+// --- DELETE WHOLESALE ---
+function deleteWholesale(key){
+  db.ref("wholesale/"+key).remove();
+  loadWholesale();
+}
+
+// --- BUY WHOLESALE ---
+function buyWholesale(key){
+  db.ref("wholesale/"+key).once("value").then(snap=>{
+    let item = snap.val();
+    db.ref("users/"+currentUser+"/money").once("value").then(mSnap=>{
+      let money = mSnap.val();
+      if(money<item.price){ alert("Pul çatmır"); return; }
+      // update user stock
+      db.ref("users/"+currentUser+"/stock/"+key).set(item);
+      db.ref("users/"+currentUser+"/money").set(money-item.price);
+      // remove from wholesale
+      db.ref("wholesale/"+key).remove();
+      loadAll();
+    });
+  });
+}
+
+// --- LOAD MY STOCK ---
+function loadMyStock(){
+  db.ref("users/"+currentUser+"/stock").once("value").then(snap=>{
+    let stock = snap.val() || {};
+    myItems.innerHTML="";
+    Object.keys(stock).forEach(k=>{
+      myItems.innerHTML += `<div class="item">${stock[k].name} | Qiymət: ${stock[k].price} AZN</div>`;
+    });
+  });
+}
+
+// --- LOAD GLOBAL MARKET ---
+function loadGlobalMarket(){
+  db.ref("market").once("value").then(snap=>{
+    let marketItems = snap.val() || {};
+    globalItems.innerHTML="";
+    Object.keys(marketItems).forEach(k=>{
+      globalItems.innerHTML += `<div class="item">${marketItems[k].name} | Qiymət: ${marketItems[k].price} AZN | Satıcı: ${marketItems[k].seller}</div>`;
+    });
+  });
+}
+
+// --- PUL GÖNDƏR ---
+function loadSendUsers(){
+  db.ref("users").once("value").then(snap=>{
+    let allUsers = snap.val() || {};
+    sendUser.innerHTML="";
+    Object.keys(allUsers).forEach(u=>{
+      if(u!==currentUser) sendUser.innerHTML += `<option value="${u}">${u}</option>`;
+    });
+  });
+}
+
+function sendMoney(){
+  let toUser = sendUser.value;
+  let amount = Number(sendAmount.value);
+  if(!toUser||amount<=0){alert("Düzgün daxil et"); return;}
+  db.ref("users/"+currentUser+"/money").once("value").then(snap=>{
+    let money = snap.val();
+    if(money<amount){alert("Pul çatmır"); return;}
+    db.ref("users/"+currentUser+"/money").set(money-amount);
+    db.ref("users/"+toUser+"/money").once("value").then(snap2=>{
+      db.ref("users/"+toUser+"/money").set(snap2.val()+amount);
+      alert(amount+" AZN göndərildi "+toUser+"-ə");
+      loadUserMoney();
+    });
+  });
+}
+
+// --- LOAD ADMIN PANEL ---
+function loadAdminPanel(){
+  if(currentUser!==admin) return;
+  db.ref("users").once("value").then(snap=>{
+    let allUsers = snap.val() || {};
+    adminUsers.innerHTML="<ul>";
+    Object.keys(allUsers).forEach(u=>{
+      adminUsers.innerHTML += `<li>${u} - Pul: ${allUsers[u].money} AZN</li>`;
+    });
+    adminUsers.innerHTML+="</ul>";
+    adminMoneyDisplay.innerText = allUsers[admin].money;
+  });
+}
+</script>
+
+</body>
+</html>
